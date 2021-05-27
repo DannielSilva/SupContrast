@@ -163,8 +163,9 @@ def set_loader(opt):
                                           transform=TwoCropTransform(train_transform),
                                           download=True)
     elif opt.dataset == 'path':
-        train_dataset = datasets.ImageFolder(root=opt.data_folder,
-                                            transform=TwoCropTransform(train_transform))
+        train_dataset = CustomDataSet(main_dir=opt.data_folder,
+                                            transform=TwoCropTransform(train_transform),
+                                            labeled_tabular=opt.data_folder+"/traindata.csv")
     else:
         raise ValueError(opt.dataset)
 
@@ -290,7 +291,61 @@ def main():
     save_file = os.path.join(
         opt.save_folder, 'last.pth')
     save_model(model, optimizer, opt, opt.epochs, save_file)
+from torch.utils.data import Dataset
+import natsort
+import pandas as pd
+from PIL import Image
+import pickle
 
+def load_image_names(data_dir, split):
+    with open(os.path.join(data_dir, split + '_image_names.pickle'), 'rb') as f:
+      image_names = pickle.load(f)
+
+    return image_names
+
+
+class CustomDataSet(Dataset):
+    def __init__(self, main_dir, transform, labeled_tabular, image_format='.jpg'):
+        self.main_dir = main_dir +"/images"
+        self.transform = transform
+        #all_imgs = os.listdir(main_dir)
+        #self.total_imgs = natsort.natsorted(all_imgs)
+        #image_names = load_image_names(main_dir,'train')
+        image_names = os.listdir(os.path.join(main_dir,'images'))
+        train_data = pd.read_csv(labeled_tabular)
+        self.labeled_tabular = train_data[train_data['name'].isin(image_names)]
+        self.labeled_tabular = self.labeled_tabular[self.labeled_tabular['name']!='PMC4240561_MA-68-291-g002.jpg'].reset_index(drop=True)
+        print('ll', self.labeled_tabular.shape)
+        #print('read', train_data)
+
+        self.image_format = image_format
+
+
+    def __len__(self):
+        return self.labeled_tabular.shape[0] #number of questions
+
+    def __getitem__(self, idx):
+        info = self.labeled_tabular.iloc[idx]
+        
+        img_name = info['name'] #+ self.image_format
+        img_loc = os.path.join(self.main_dir, img_name)
+        image = Image.open(img_loc).convert("RGB")
+        tensor_image = self.transform(image)
+
+        #question = info['input_ids']
+        y = info['caption']
+
+
+        # img_loc = os.path.join(self.main_dir, self.total_imgs[idx])
+        # image = Image.open(img_loc).convert("RGB")
+        # tensor_image = self.transform(image)
+        # image_name = self.total_imgs[idx].split('.')[0]
+        # y = self.get_class_label(image_name)
+        # question = self.get_question(image_name)
+        # print("aaaaaa",type(tensor_image),type(y))
+        #print(image_name)
+        #return tensor_image, question, y
+        return tensor_image, 0
 
 if __name__ == '__main__':
     main()
