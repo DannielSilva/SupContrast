@@ -222,7 +222,8 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
         #print("images after cat", images.shape)
         if torch.cuda.is_available():
             images = images.cuda(non_blocking=True)
-            labels = labels.cuda(non_blocking=True)
+            if opt.dataset != 'roco':
+                labels = labels.cuda(non_blocking=True)
         if opt.dataset == 'roco':
             bsz = len(labels)
         else:
