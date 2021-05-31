@@ -14,6 +14,7 @@ from torchvision import transforms, datasets
 from util import TwoCropTransform, AverageMeter
 from util import adjust_learning_rate, warmup_learning_rate
 from util import set_optimizer, save_model
+from util import RocoDataset, buildMask
 from networks.resnet_big import SupConResNet
 from losses import SupConLoss
 
@@ -23,10 +24,12 @@ try:
 except ImportError:
     pass
 
+import wandb
 
 def parse_option():
     parser = argparse.ArgumentParser('argument for training')
 
+    parser.add_argument('--run_name', type = str, required = True, help = "run name for wandb")
     parser.add_argument('--print_freq', type=int, default=10,
                         help='print frequency')
     parser.add_argument('--save_freq', type=int, default=50,
@@ -53,7 +56,7 @@ def parse_option():
     # model dataset
     parser.add_argument('--model', type=str, default='resnet50')
     parser.add_argument('--dataset', type=str, default='cifar10',
-                        choices=['cifar10', 'cifar100', 'path'], help='dataset')
+                        choices=['cifar10', 'cifar100', 'path','roco'], help='dataset')
     parser.add_argument('--mean', type=str, help='mean of dataset in path in form of str tuple')
     parser.add_argument('--std', type=str, help='std of dataset in path in form of str tuple')
     parser.add_argument('--data_folder', type=str, default=None, help='path to custom dataset')
@@ -136,7 +139,7 @@ def set_loader(opt):
     elif opt.dataset == 'cifar100':
         mean = (0.5071, 0.4867, 0.4408)
         std = (0.2675, 0.2565, 0.2761)
-    elif opt.dataset == 'path':
+    elif opt.dataset == 'path' or opt.dataset == 'roco':
         mean = eval(opt.mean)
         std = eval(opt.std)
     else:
@@ -162,10 +165,15 @@ def set_loader(opt):
         train_dataset = datasets.CIFAR100(root=opt.data_folder,
                                           transform=TwoCropTransform(train_transform),
                                           download=True)
-    elif opt.dataset == 'path':
-        train_dataset = CustomDataSet(main_dir=opt.data_folder,
+    elif opt.dataset == 'roco':
+        train_dataset = RocoDataset(main_dir=opt.data_folder,
                                             transform=TwoCropTransform(train_transform),
-                                            labeled_tabular=opt.data_folder+"/traindata.csv")
+                                            labeled_tabular=opt.data_folder+"/traindata.csv",
+                                            method=opt.method)
+
+    elif opt.dataset == 'path':
+        train_dataset = datasets.ImageFolder(root=opt.data_folder,
+                                            transform=TwoCropTransform(train_transform))
     else:
         raise ValueError(opt.dataset)
 
@@ -205,23 +213,43 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
 
     end = time.time()
     for idx, (images, labels) in enumerate(train_loader):
+        # print(labels)
+        # print("images from loader", len(images))
+        # print("labels from loader", len(labels))
         data_time.update(time.time() - end)
 
         images = torch.cat([images[0], images[1]], dim=0)
+        #print("images after cat", images.shape)
         if torch.cuda.is_available():
             images = images.cuda(non_blocking=True)
             labels = labels.cuda(non_blocking=True)
-        bsz = labels.shape[0]
+        if opt.dataset == 'roco':
+            bsz = len(labels)
+        else:
+            bsz = labels.shape[0]
+
 
         # warm-up learning rate
         warmup_learning_rate(opt, epoch, idx, len(train_loader), optimizer)
 
         # compute loss
         features = model(images)
+        # print("features from model", features.shape)
         f1, f2 = torch.split(features, [bsz, bsz], dim=0)
+        # print("f1, f2", f1.shape, f2.shape)
         features = torch.cat([f1.unsqueeze(1), f2.unsqueeze(1)], dim=1)
+        # print("features after cat", features.shape)
+        
+
         if opt.method == 'SupCon':
-            loss = criterion(features, labels)
+            if opt.dataset == 'roco':
+                mask = buildMask(bsz,labels)
+                # print("mask",mask)
+                # from sys import exit
+                # exit(1)
+                loss = criterion(features, mask=mask)
+            else: 
+                loss = criterion(features, labels)
         elif opt.method == 'SimCLR':
             loss = criterion(features)
         else:
@@ -256,11 +284,15 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
 def main():
     opt = parse_option()
 
+    wandb.init(project='supcontrast', name = opt.run_name, config = opt)
+
     # build data loader
     train_loader = set_loader(opt)
 
     # build model and criterion
     model, criterion = set_model(opt)
+
+    wandb.watch(model, log='all')
 
     # build optimizer
     optimizer = set_optimizer(opt, model)
@@ -287,65 +319,13 @@ def main():
                 opt.save_folder, 'ckpt_epoch_{epoch}.pth'.format(epoch=epoch))
             save_model(model, optimizer, opt, epoch, save_file)
 
+        wandb.log({'train_loss':loss,'learning_rate': optimizer.param_groups[0]['lr']})
+
     # save the last model
     save_file = os.path.join(
         opt.save_folder, 'last.pth')
     save_model(model, optimizer, opt, opt.epochs, save_file)
-from torch.utils.data import Dataset
-import natsort
-import pandas as pd
-from PIL import Image
-import pickle
 
-def load_image_names(data_dir, split):
-    with open(os.path.join(data_dir, split + '_image_names.pickle'), 'rb') as f:
-      image_names = pickle.load(f)
-
-    return image_names
-
-
-class CustomDataSet(Dataset):
-    def __init__(self, main_dir, transform, labeled_tabular, image_format='.jpg'):
-        self.main_dir = main_dir +"/images"
-        self.transform = transform
-        #all_imgs = os.listdir(main_dir)
-        #self.total_imgs = natsort.natsorted(all_imgs)
-        #image_names = load_image_names(main_dir,'train')
-        image_names = os.listdir(os.path.join(main_dir,'images'))
-        train_data = pd.read_csv(labeled_tabular)
-        self.labeled_tabular = train_data[train_data['name'].isin(image_names)]
-        self.labeled_tabular = self.labeled_tabular[self.labeled_tabular['name']!='PMC4240561_MA-68-291-g002.jpg'].reset_index(drop=True)
-        print('ll', self.labeled_tabular.shape)
-        #print('read', train_data)
-
-        self.image_format = image_format
-
-
-    def __len__(self):
-        return self.labeled_tabular.shape[0] #number of questions
-
-    def __getitem__(self, idx):
-        info = self.labeled_tabular.iloc[idx]
-        
-        img_name = info['name'] #+ self.image_format
-        img_loc = os.path.join(self.main_dir, img_name)
-        image = Image.open(img_loc).convert("RGB")
-        tensor_image = self.transform(image)
-
-        #question = info['input_ids']
-        y = info['caption']
-
-
-        # img_loc = os.path.join(self.main_dir, self.total_imgs[idx])
-        # image = Image.open(img_loc).convert("RGB")
-        # tensor_image = self.transform(image)
-        # image_name = self.total_imgs[idx].split('.')[0]
-        # y = self.get_class_label(image_name)
-        # question = self.get_question(image_name)
-        # print("aaaaaa",type(tensor_image),type(y))
-        #print(image_name)
-        #return tensor_image, question, y
-        return tensor_image, 0
 
 if __name__ == '__main__':
     main()
