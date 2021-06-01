@@ -146,16 +146,28 @@ def set_loader(opt):
         raise ValueError('dataset not supported: {}'.format(opt.dataset))
     normalize = transforms.Normalize(mean=mean, std=std)
 
-    train_transform = transforms.Compose([
-        transforms.RandomResizedCrop(size=opt.size, scale=(0.2, 1.)),
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomApply([
-            transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)
-        ], p=0.8),
-        transforms.RandomGrayscale(p=0.2),
-        transforms.ToTensor(),
-        normalize,
-    ])
+    if opt.dataset == 'roco': #from VirajBagal/MMBERT/roco_train.py
+        print('roco tfms')
+        train_transform = transforms.Compose([
+                            
+                            transforms.Resize(opt.size), #added with profs
+                            transforms.CenterCrop(opt.size), #added with profs
+                            transforms.RandomResizedCrop(224,scale=(0.95,1.05),ratio=(0.95,1.05)),
+                            transforms.RandomRotation(5),
+                            transforms.ColorJitter(brightness=0.05,contrast=0.05,saturation=0.05,hue=0.05),
+                            transforms.ToTensor(), 
+                            normalize])
+    else:
+        train_transform = transforms.Compose([
+            transforms.RandomResizedCrop(size=opt.size, scale=(0.2, 1.)),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomApply([
+                transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)
+            ], p=0.8),
+            transforms.RandomGrayscale(p=0.2),
+            transforms.ToTensor(),
+            normalize,
+        ])
 
     if opt.dataset == 'cifar10':
         train_dataset = datasets.CIFAR10(root=opt.data_folder,
@@ -286,6 +298,7 @@ def main():
     opt = parse_option()
 
     wandb.init(project='supcontrast', name = opt.run_name, config = opt)
+    torch.cuda.empty_cache()
 
     # build data loader
     train_loader = set_loader(opt)
@@ -329,4 +342,5 @@ def main():
 
 
 if __name__ == '__main__':
+    __spec__ = None
     main()

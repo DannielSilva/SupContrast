@@ -115,7 +115,11 @@ def jaccard_similarity(doc1, doc2):
         
     # Calculate Jaccard similarity score 
     # using length of intersection set divided by length of union set
-    return float(len(intersection)) / len(union)
+    if len(union) != 0:
+        return float(len(intersection)) / len(union)
+    else:
+        print('union == 0\n1st: ', doc1,'\n2nd: ',doc2)
+        return 0.0
 
 def buildMask(bsz,captions):
     mask = torch.zeros(bsz, bsz, dtype=torch.float)
@@ -142,7 +146,8 @@ class RocoDataset(Dataset):
         image_names = os.listdir(os.path.join(main_dir,'images'))
         train_data = pd.read_csv(labeled_tabular)
         self.labeled_tabular = train_data[train_data['name'].isin(image_names)]
-        self.labeled_tabular = self.labeled_tabular[self.labeled_tabular['name']!='PMC4240561_MA-68-291-g002.jpg'].reset_index(drop=True)
+        self.labeled_tabular = self.labeled_tabular[self.labeled_tabular['name']!='PMC4240561_MA-68-291-g002.jpg'].reset_index(drop=True) #no image
+        self.labeled_tabular = self.labeled_tabular[self.labeled_tabular['name']!='PMC4093298_jadp-03-059-g02.jpg'].reset_index(drop=True) #no caption
         print('ll', self.labeled_tabular.shape)
         #print('read', train_data)
 
