@@ -169,7 +169,6 @@ class RocoDataset(Dataset):
         caption = info['caption']
 
         if self.method == 'SimCLR':
-            return tensor_image, 0
-
+            return tensor_image, float(0)
         elif self.method == 'SupCon':
             return tensor_image, caption

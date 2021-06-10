@@ -80,6 +80,10 @@ def parse_option():
     parser.add_argument('--trial', type=str, default='0',
                         help='id for recording multiple runs')
 
+    #device
+    parser.add_argument('--cpu', action='store_true',
+                        help='using cpu device')
+
     opt = parser.parse_args()
 
     # check if dataset is path that passed required arguments
@@ -152,7 +156,7 @@ def set_loader(opt):
                             
                             transforms.Resize(opt.size), #added with profs
                             transforms.CenterCrop(opt.size), #added with profs
-                            transforms.RandomResizedCrop(224,scale=(0.95,1.05),ratio=(0.95,1.05)),
+                            transforms.RandomResizedCrop(opt.size,scale=(0.95,1.05),ratio=(0.95,1.05)),
                             transforms.RandomRotation(5),
                             transforms.ColorJitter(brightness=0.05,contrast=0.05,saturation=0.05,hue=0.05),
                             transforms.ToTensor(), 
@@ -204,8 +208,8 @@ def set_model(opt):
     # enable synchronized Batch Normalization
     if opt.syncBN:
         model = apex.parallel.convert_syncbn_model(model)
-
-    if torch.cuda.is_available():
+    print('cpu', opt.cpu)
+    if torch.cuda.is_available() and not opt.cpu:
         if torch.cuda.device_count() > 1:
             model.encoder = torch.nn.DataParallel(model.encoder)
         model = model.cuda()
@@ -230,9 +234,10 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
         # print("labels from loader", len(labels))
         data_time.update(time.time() - end)
 
+        # print("images before cat", images[0].shape, images[1].shape)
         images = torch.cat([images[0], images[1]], dim=0)
-        #print("images after cat", images.shape)
-        if torch.cuda.is_available():
+        # print("images after cat", images.shape)
+        if torch.cuda.is_available()  and not opt.cpu:
             images = images.cuda(non_blocking=True)
             if opt.dataset != 'roco':
                 labels = labels.cuda(non_blocking=True)
@@ -297,7 +302,7 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
 def main():
     opt = parse_option()
 
-    wandb.init(project='supcontrast', name = opt.run_name, config = opt)
+    #wandb.init(project='supcontrast', name = opt.run_name, config = opt)
     torch.cuda.empty_cache()
 
     # build data loader
@@ -306,7 +311,7 @@ def main():
     # build model and criterion
     model, criterion = set_model(opt)
 
-    wandb.watch(model, log='all')
+    #wandb.watch(model, log='all')
 
     # build optimizer
     optimizer = set_optimizer(opt, model)
@@ -333,7 +338,7 @@ def main():
                 opt.save_folder, 'ckpt_epoch_{epoch}.pth'.format(epoch=epoch))
             save_model(model, optimizer, opt, epoch, save_file)
 
-        wandb.log({'train_loss':loss,'learning_rate': optimizer.param_groups[0]['lr']})
+        #wandb.log({'train_loss':loss,'learning_rate': optimizer.param_groups[0]['lr']})
 
     # save the last model
     save_file = os.path.join(
