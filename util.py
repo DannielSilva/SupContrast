@@ -93,3 +93,82 @@ def save_model(model, optimizer, opt, epoch, save_file):
     }
     torch.save(state, save_file)
     del state
+
+from torch.utils.data import Dataset
+import natsort
+import pandas as pd
+from PIL import Image
+import pickle
+import os
+
+def jaccard_similarity(doc1, doc2): 
+    
+    # List the unique words in a document
+    words_doc1 = set(doc1.lower().split()) 
+    words_doc2 = set(doc2.lower().split())
+    
+    # Find the intersection of words list of doc1 & doc2
+    intersection = words_doc1.intersection(words_doc2)
+
+    # Find the union of words list of doc1 & doc2
+    union = words_doc1.union(words_doc2)
+        
+    # Calculate Jaccard similarity score 
+    # using length of intersection set divided by length of union set
+    if len(union) != 0:
+        return float(len(intersection)) / len(union)
+    else:
+        print('union == 0\n1st: ', doc1,'\n2nd: ',doc2)
+        return 0.0
+
+def buildMask(bsz,captions):
+    mask = torch.zeros(bsz, bsz, dtype=torch.float)
+    #import IPython; IPython.embed(); exit(1)
+    for c1 in range(len(captions)):
+        for c2 in range(len(captions)):
+            mask[c1,c2] = jaccard_similarity(captions[c1],captions[c2])
+    return mask
+
+def load_image_names(data_dir, split):
+    with open(os.path.join(data_dir, split + '_image_names.pickle'), 'rb') as f:
+      image_names = pickle.load(f)
+
+    return image_names
+
+
+class RocoDataset(Dataset):
+    def __init__(self, main_dir, transform, labeled_tabular, image_format='.jpg', method='SimCLR'):
+        self.main_dir = main_dir +"/images"
+        self.transform = transform
+        #all_imgs = os.listdir(main_dir)
+        #self.total_imgs = natsort.natsorted(all_imgs)
+        #image_names = load_image_names(main_dir,'train')
+        image_names = os.listdir(os.path.join(main_dir,'images'))
+        train_data = pd.read_csv(labeled_tabular)
+        self.labeled_tabular = train_data[train_data['name'].isin(image_names)]
+        self.labeled_tabular = self.labeled_tabular[self.labeled_tabular['name']!='PMC4240561_MA-68-291-g002.jpg'].reset_index(drop=True) #no image
+        self.labeled_tabular = self.labeled_tabular[self.labeled_tabular['name']!='PMC4093298_jadp-03-059-g02.jpg'].reset_index(drop=True) #no caption
+        print('ll', self.labeled_tabular.shape)
+        #print('read', train_data)
+
+        self.image_format = image_format
+        self.method = method
+
+
+    def __len__(self):
+        return self.labeled_tabular.shape[0] #number of questions
+
+    def __getitem__(self, idx):
+        info = self.labeled_tabular.iloc[idx]
+        
+        img_name = info['name'] #+ self.image_format
+        img_loc = os.path.join(self.main_dir, img_name)
+        image = Image.open(img_loc).convert("RGB")
+        tensor_image = self.transform(image)
+
+        caption = info['caption']
+
+        if self.method == 'SimCLR':
+            return tensor_image, float(0)
+        elif self.method == 'SupCon':
+            return tensor_image, caption

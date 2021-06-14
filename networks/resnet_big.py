@@ -7,6 +7,9 @@ Adapted from: https://github.com/bearpaw/pytorch-classification
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torchvision import models
+from efficientnet_pytorch import EfficientNet
+
 
 
 class BasicBlock(nn.Module):
@@ -140,14 +143,22 @@ def resnet101(**kwargs):
     return ResNet(Bottleneck, [3, 4, 23, 3], **kwargs)
 
 
+# model_dict = {
+#     'resnet18': [resnet18, 512],
+#     'resnet34': [resnet34, 512],
+#     'resnet50': [resnet50, 2048],
+#     'resnet101': [resnet101, 2048],
+# }
+
 model_dict = {
-    'resnet18': [resnet18, 512],
-    'resnet34': [resnet34, 512],
-    'resnet50': [resnet50, 2048],
-    'resnet101': [resnet101, 2048],
+    'resnet18':  [models.resnet18, 512],
+    'resnet34':  [models.resnet34, 512],
+    'resnet50':  [models.resnet50, 2048],
+    'resnet101': [models.resnet101, 2048],
+    'resnet152': [models.resnet152, 2048],
+    'efficientnet-b3': [EfficientNet.from_pretrained, 1536],
+    'efficientnet-b5': [EfficientNet.from_pretrained, 2048]
 }
-
-
 class LinearBatchNorm(nn.Module):
     """Implements BatchNorm1d by BatchNorm2d, for SyncBN purpose"""
     def __init__(self, dim, affine=True):
@@ -167,7 +178,15 @@ class SupConResNet(nn.Module):
     def __init__(self, name='resnet50', head='mlp', feat_dim=128):
         super(SupConResNet, self).__init__()
         model_fun, dim_in = model_dict[name]
-        self.encoder = model_fun()
+        self.name = name
+        self.gap = nn.AdaptiveAvgPool2d((1,1))
+        print('cnn', name)
+        # self.encoder = models.resnet152(pretrained=True)
+        if 'resnet' in self.name:
+            self.encoder = model_fun()
+            self.encoder.fc = nn.Sequential()
+        else:
+            self.encoder = model_fun(name)
         if head == 'linear':
             self.head = nn.Linear(dim_in, feat_dim)
         elif head == 'mlp':
@@ -181,7 +200,12 @@ class SupConResNet(nn.Module):
                 'head not supported: {}'.format(head))
 
     def forward(self, x):
-        feat = self.encoder(x)
+        if 'resnet' in self.name:
+            feat = self.encoder(x)
+        else:
+            #import IPython; IPython.embed(); exit(1)
+            feat = self.gap(self.encoder.extract_features(x)).squeeze()
+            
         feat = F.normalize(self.head(feat), dim=1)
         return feat
 
